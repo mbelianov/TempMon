@@ -17,7 +17,7 @@ ADC_MODE(ADC_VCC);
 #define DBG_PROG 
 
 #ifdef DBG_PROG
-  #define DBG_PRINTLN(x)                  {Serial.println(x); delay(100);}
+  #define DBG_PRINTLN(x)                  {Serial.println(x); /*delay(100);*/}
   #define DBG_PRINT(x)                    Serial.print(x)
   #define DBG_PRINTP(x)                   Serial.print(F(x))
 #else
@@ -29,17 +29,18 @@ ADC_MODE(ADC_VCC);
 #define APPNAME "TempMon"
 #define VERSION "1.0.0-dev"
 #define COMPDATE __DATE__ __TIME__
-#define MODEBUTTON 0
+#define MODEBUTTON 0    //GPIO00 (nodeMCU: D3 (FLASH))
 
-#define LED_PIN 16
+#define LED_PIN 2      //GPIO02 (nodeMCU: D4)
 
-#define REPORT_INTERVAL 2 //minutes
+#define REPORT_INTERVAL 60 //minutes
 
 // Data wire is plugged into port 2 on the ESP8266
 // TODO: is this the best pin to use!!!
-#define ONE_WIRE_BUS 2      
+#define ONE_WIRE_BUS 4     //GPIO04 (nodeMCU: D2) 
 OneWire oneWire(ONE_WIRE_BUS);
 DallasTemperature DS18B20(&oneWire);
+DeviceAddress DS18B20Address;
 
 // number of params to be defined 
 const int _nrXF = 3;
@@ -51,13 +52,14 @@ char* AWS_endpoint;
 //AWS device name and shadow MQTT topic
 //Used for MQTT client and to communicate wth AWS shadow service
 #define AWS_SHADOW "$aws/things/%s/shadow/update"
-#define AWS_DEFAULT_NAME "ThingName-%08X"
+#define AWS_DEFAULT_NAME "TempMon-%08X"
 char* AWS_thing_name;
 char* AWS_shadow;
 
-#define AWS_SHADOW_UPDATE_INTERVAL  ((uint16_t)(24*60/REPORT_INTERVAL))  //update AWS shadows once per day
-#define AWS_RTCMEM_MAGICBYTE        'W'
-#define AWS_RTCMEM_BEGIN            (128-sizeof(rtcMemAWSDef)/4)           //at the end of rtc mem
+#define AWS_SHADOW_UPDATE_PERIOD        (24 * 60)     //minutes. AWS shadow service will be updated once during this time period
+#define AWS_SHADOW_UPDATE_INTERVALS     ((AWS_SHADOW_UPDATE_PERIOD/REPORT_INTERVAL))  
+#define AWS_RTCMEM_MAGICBYTE            'W'
+#define AWS_RTCMEM_BEGIN                (128-sizeof(rtcMemAWSDef)/4)           //at the end of rtc mem
 typedef struct {
     char markerFlag;            // magic byte
     int sleepCycles;       // AWS shadow service update countdown
@@ -89,6 +91,7 @@ PubSubClient mqtt(espClient);
 #define MAX_MQTT_CONNECT_RETRIES 2
 
 
+
 void callback(char* topic, byte* payload, unsigned int length) {
     DBG_PRINTP("Message [");
     DBG_PRINT(topic);
@@ -104,33 +107,42 @@ void mqttConnectAndSend(const char * topic, const char * msg) {
     
     int retries = MAX_MQTT_CONNECT_RETRIES;
 
-    if (mqtt.connected()){
-        DBG_PRINTP("MQTT connection exist. Publish: [");
-        DBG_PRINT(topic);
-        DBG_PRINTP("] ");
-        DBG_PRINTLN(msg);
-        mqtt.publish(topic, msg);
-    }
-    else
-        // Loop until we're reconnected
-        // is it wise for a battery operation
-        while (!mqtt.connected() && retries-- > 0) {
-            DBG_PRINTP("Attempting MQTT connection...");
-            if (mqtt.connect(AWS_thing_name)){
-                DBG_PRINTP("connected!");
+    DBG_PRINTP("Attempting MQTT connection...");
+    while (mqtt.connect(AWS_thing_name) && retries-- > 0){
+        if (mqtt.connected()){
+            DBG_PRINTP("connected!");
+            DBG_PRINTLN();
+            DBG_PRINTP("Publishing: [");
+            DBG_PRINT(topic);
+            DBG_PRINTP("] ");
+            DBG_PRINT(msg);
+            DBG_PRINTP(" (");
+            DBG_PRINT(strlen(topic)+strlen(msg));
+            DBG_PRINTP("/");
+            DBG_PRINT(MQTT_MAX_PACKET_SIZE);
+            DBG_PRINTP(") ");           
+            if (mqtt.publish(topic, msg)) {
+                DBG_PRINTP(" -> Success.");
                 DBG_PRINTLN();
-                DBG_PRINTP("Publish: [");
-                DBG_PRINT(topic);
-                DBG_PRINTP("] ");
-                DBG_PRINTLN(msg);
-                mqtt.publish(topic, msg);
+                retries = 0;  
+                //we need some delay to allow ESP8266 to actually send the MQTT packet
+                unsigned long ts = millis();
+                while(millis() < ts + 100){     
+                    mqtt.loop();         
+                    yield();
+                }
             }
-            else {
-                DBG_PRINTP("failed, rc=");
-                DBG_PRINTLN(mqtt.state());
-                delay(200);
+            else{
+                DBG_PRINTP(" -> Fail. Is msg too long!");
+                DBG_PRINTLN(MQTT_MAX_PACKET_SIZE);                
             }
         }
+        else{
+            DBG_PRINTP("failed, rc=");
+            DBG_PRINTLN(mqtt.state());
+        }
+    }
+
 }
 
 bool readRTCMemAWS() {
@@ -218,26 +230,31 @@ void setup() {
             DBG_PRINT('.');
             if (IAS.buttonLoop() != ModeButtonNoPress)
                 t = millis();
-            delay(100);
+            delay(33);
+            if (IAS.buttonLoop() == ModeButtonShortPress) //firmware update
+                digitalWrite(LED_PIN, HIGH);
+            delay(33);
+            if (IAS.buttonLoop() == ModeButtonLongPress) //config mode
+                digitalWrite(LED_PIN, LOW);                
+            delay(33);
         }
         DBG_PRINTLN();
         digitalWrite(LED_PIN, HIGH);
     }
     
     readRTCMemAWS();
-    printRTCMemAWS();
 
     AWS_shadow = new char[strlen_P(PSTR(AWS_SHADOW)) + strlen(AWS_thing_name) - 2 + 1];
     sprintf_P(AWS_shadow, PSTR(AWS_SHADOW), AWS_thing_name);
 
-    //verify all parameters are ok
-    DBG_PRINTP("Parameters are:");
-    DBG_PRINTLN();
-    DBG_PRINTLN(AWS_thing_name);
-    DBG_PRINTLN(AWS_endpoint);
-    DBG_PRINTLN(AWS_shadow);
-    DBG_PRINTLN(AWS_content_topic);
-    DBG_PRINTLN();
+    // verify all parameters are ok
+    // DBG_PRINTP("Parameters are:");
+    // DBG_PRINTLN();
+    // DBG_PRINTLN(AWS_thing_name);
+    // DBG_PRINTLN(AWS_endpoint);
+    // DBG_PRINTLN(AWS_shadow);
+    // DBG_PRINTLN(AWS_content_topic);
+    // DBG_PRINTLN();
 
     mqtt.setServer(AWS_endpoint, 8883);
 
@@ -286,15 +303,16 @@ void setup() {
     }
     
     float temp;
+    DS18B20.getAddress(DS18B20Address, 0);
+    DS18B20.setResolution(DS18B20Address,9);
     DS18B20.requestTemperatures(); 
     temp = DS18B20.getTempCByIndex(0); 
     DBG_PRINTP("Temperature: ");
     DBG_PRINTLN(temp);
-
+    
     String s;
     StaticJsonBuffer<250> jsonBuffer; 
     JsonObject& root = jsonBuffer.createObject();
-    root["location"] = 0; //for further use
     root["sensor"] = AWS_thing_name;
     root["temperature"] = temp;
     root.printTo(s);
@@ -304,16 +322,18 @@ void setup() {
     if (rtcMemAWS.sleepCycles == 0){
         DBG_PRINTP("Time to check for new FW and to update AWS shadow service.");
         DBG_PRINTLN();
-        IAS.callHome();
+        //IAS.callHome();
         String s;
-        StaticJsonBuffer<250> jsonBuffer; //TODO: precise the size
+        StaticJsonBuffer<350> jsonBuffer; 
         JsonObject& root = jsonBuffer.createObject();
-        root["sensor"] = AWS_thing_name;
-        root["topic"] = AWS_content_topic;
-        root["battery"] = ESP.getVcc();
+        JsonObject& state = root.createNestedObject("state");
+        JsonObject& state_reported = state.createNestedObject("reported");
+        state_reported["sensor"] = AWS_thing_name;
+        state_reported["topic"] = AWS_content_topic;
+        state_reported["battery"] = ESP.getVcc();
         root.printTo(s);
         mqttConnectAndSend(AWS_shadow, s.c_str());
-        rtcMemAWS.sleepCycles = AWS_SHADOW_UPDATE_INTERVAL;
+        rtcMemAWS.sleepCycles = AWS_SHADOW_UPDATE_INTERVALS-1;
     }
     else
         rtcMemAWS.sleepCycles--;
@@ -324,10 +344,9 @@ void setup() {
     writeRTCMemAWS();
     DBG_PRINTLN();    
     printRTCMemAWS();
-
+    
     DBG_PRINTP("Going to deep sleep...");
     DBG_PRINTLN();
-  
     // Connect GPIO16 to RST to allow ESP to wake up from deepSleep
     ESP.deepSleep(1e6L * 60 * REPORT_INTERVAL); 
     

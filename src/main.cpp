@@ -14,7 +14,7 @@ extern "C" {
 
 ADC_MODE(ADC_VCC);
 
-#define DBG_PROG 
+//#define DBG_PROG 
 
 #ifdef DBG_PROG
   #define DBG_PRINTLN(x)                  {Serial.println(x); /*delay(100);*/}
@@ -27,13 +27,13 @@ ADC_MODE(ADC_VCC);
 #endif
 
 #define APPNAME "TempMon"
-#define VERSION "1.0.0-dev"
+#define VERSION "1.0.0-RC1"
 #define COMPDATE __DATE__ __TIME__
 #define MODEBUTTON 0    //GPIO00 (nodeMCU: D3 (FLASH))
 
 #define LED_PIN 2      //GPIO02 (nodeMCU: D4)
 
-#define REPORT_INTERVAL 60 //minutes
+#define REPORT_INTERVAL 30 //minutes
 
 // Data wire is plugged into port 2 on the ESP8266
 // TODO: is this the best pin to use!!!
@@ -122,7 +122,7 @@ void mqttConnectAndSend(const char * topic, const char * msg) {
             DBG_PRINT(MQTT_MAX_PACKET_SIZE);
             DBG_PRINTP(") ");           
             if (mqtt.publish(topic, msg)) {
-                DBG_PRINTP(" -> Success.");
+                DBG_PRINTP("-> Success.");
                 DBG_PRINTLN();
                 retries = 0;  
                 //we need some delay to allow ESP8266 to actually send the MQTT packet
@@ -322,7 +322,7 @@ void setup() {
     if (rtcMemAWS.sleepCycles == 0){
         DBG_PRINTP("Time to check for new FW and to update AWS shadow service.");
         DBG_PRINTLN();
-        //IAS.callHome();
+        IAS.callHome();
         String s;
         StaticJsonBuffer<350> jsonBuffer; 
         JsonObject& root = jsonBuffer.createObject();

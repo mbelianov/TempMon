@@ -27,13 +27,13 @@ ADC_MODE(ADC_VCC);
 #endif
 
 #define APPNAME "TempMon"
-#define VERSION "1.0.0-RC1"
+#define VERSION "1.0.0-RC2"
 #define COMPDATE __DATE__ __TIME__
 #define MODEBUTTON 0    //GPIO00 (nodeMCU: D3 (FLASH))
 
 #define LED_PIN 2      //GPIO02 (nodeMCU: D4)
 
-#define REPORT_INTERVAL 30 //minutes
+#define REPORT_INTERVAL 60 //minutes
 
 // Data wire is plugged into port 2 on the ESP8266
 // TODO: is this the best pin to use!!!
@@ -46,7 +46,7 @@ DeviceAddress DS18B20Address;
 const int _nrXF = 3;
 
 //MQTT broker address
-#define AWS_ENDPOINT "a1jkex5rueqh0y.iot.us-east-2.amazonaws.com"
+#define AWS_ENDPOINT "a1jkex5rueqh0y.iot.us-east-1.amazonaws.com"
 char* AWS_endpoint;  
 
 //AWS device name and shadow MQTT topic
@@ -77,6 +77,8 @@ IOTAppStory IAS(APPNAME, VERSION, COMPDATE, MODEBUTTON);
 boolean firstBoot;
 
 //prepare SSL layer
+//openssl x509 -in aaaaaaaaa-certificate.pem.crt.txt -out cert.der -outform DER 
+//openssl rsa -in aaaaaaaaaa-private.pem.key -out private.der -outform DER 
 #define CERTIFICATE_FILE "/cert.der"
 #define PRIVATE_KEY_FILE "/private.der"
 
@@ -86,7 +88,6 @@ void callback(char* topic, byte* payload, unsigned int length);
 //MQTT client
 //set  MQTT port number to 8883 as per standard
 WiFiClientSecure espClient;
-//PubSubClient mqtt(AWS_endpoint, 8883, callback, espClient); 
 PubSubClient mqtt(espClient); 
 #define MAX_MQTT_CONNECT_RETRIES 2
 
@@ -108,7 +109,7 @@ void mqttConnectAndSend(const char * topic, const char * msg) {
     int retries = MAX_MQTT_CONNECT_RETRIES;
 
     DBG_PRINTP("Attempting MQTT connection...");
-    while (mqtt.connect(AWS_thing_name) && retries-- > 0){
+    while (mqtt.connect(AWS_thing_name) || retries-- > 0){
         if (mqtt.connected()){
             DBG_PRINTP("connected!");
             DBG_PRINTLN();
@@ -131,6 +132,7 @@ void mqttConnectAndSend(const char * topic, const char * msg) {
                     mqtt.loop();         
                     yield();
                 }
+                break;
             }
             else{
                 DBG_PRINTP(" -> Fail. Is msg too long!");
@@ -140,6 +142,7 @@ void mqttConnectAndSend(const char * topic, const char * msg) {
         else{
             DBG_PRINTP("failed, rc=");
             DBG_PRINTLN(mqtt.state());
+            DBG_PRINTP("Will try again...");
         }
     }
 
@@ -210,13 +213,19 @@ void setup() {
     IAS.addField(AWS_content_topic, "topic", "Topic", 96);
 
     if (resetInfo->reason == REASON_DEEP_SLEEP_AWAKE){
-        DBG_PRINTP("Woke up from deep sleep!");
-        DBG_PRINTLN();
+        Serial.println(F("Woke up from deep sleep!"));
         IAS.processField();
+#ifdef DBG_PROG
+        IAS.callHome();      
+#endif        
     }
     else {
         DBG_PRINTP("Booting...!");
         DBG_PRINTLN();
+        DBG_PRINTP("Flash real size: ");
+        DBG_PRINTLN(ESP.getFlashChipRealSize());  
+        DBG_PRINTP("Flash IDE size: ");
+        DBG_PRINTLN(ESP.getFlashChipSize());                  
         rtcMemAWS.sleepCycles = 0;
         writeRTCMemAWS();
         DBG_PRINTP("AWS RTC Mem initialized!");
@@ -248,13 +257,13 @@ void setup() {
     sprintf_P(AWS_shadow, PSTR(AWS_SHADOW), AWS_thing_name);
 
     // verify all parameters are ok
-    // DBG_PRINTP("Parameters are:");
-    // DBG_PRINTLN();
-    // DBG_PRINTLN(AWS_thing_name);
-    // DBG_PRINTLN(AWS_endpoint);
-    // DBG_PRINTLN(AWS_shadow);
-    // DBG_PRINTLN(AWS_content_topic);
-    // DBG_PRINTLN();
+    DBG_PRINTP("Parameters are:");
+    DBG_PRINTLN();
+    DBG_PRINTLN(AWS_thing_name);
+    DBG_PRINTLN(AWS_endpoint);
+    DBG_PRINTLN(AWS_shadow);
+    DBG_PRINTLN(AWS_content_topic);
+    DBG_PRINTLN();
 
     mqtt.setServer(AWS_endpoint, 8883);
 
@@ -265,6 +274,12 @@ void setup() {
         DBG_PRINTLN();
     }
     else {
+        DBG_PRINTP("SPIFFS content...");
+        DBG_PRINTLN();
+        Dir dir = SPIFFS.openDir("");
+        while (dir.next()) {
+            DBG_PRINTLN(dir.fileName());
+        }        
         DBG_PRINTP("Free heap: ");
         DBG_PRINTLN(ESP.getFreeHeap());
         // Load certificate file
@@ -338,15 +353,15 @@ void setup() {
     else
         rtcMemAWS.sleepCycles--;
 
-    DBG_PRINTLN();    
-    DBG_PRINTP("Updating AWS RTC Mem...");
+    // DBG_PRINTLN();    
+    // DBG_PRINTP("Updating AWS RTC Mem...");
     DBG_PRINTLN();
     writeRTCMemAWS();
     DBG_PRINTLN();    
     printRTCMemAWS();
     
-    DBG_PRINTP("Going to deep sleep...");
-    DBG_PRINTLN();
+    Serial.println(F("Going to deep sleep..."));
+
     // Connect GPIO16 to RST to allow ESP to wake up from deepSleep
     ESP.deepSleep(1e6L * 60 * REPORT_INTERVAL); 
     

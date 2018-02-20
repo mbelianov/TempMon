@@ -27,7 +27,7 @@ ADC_MODE(ADC_VCC);
 #endif
 
 #define APPNAME "TempMon"
-#define VERSION "1.0.0-RC2"
+#define VERSION "1.1.0-RC1"
 #define COMPDATE __DATE__ __TIME__
 #define MODEBUTTON 0    //GPIO00 (nodeMCU: D3 (FLASH))
 
@@ -339,13 +339,17 @@ void setup() {
         DBG_PRINTLN();
         IAS.callHome();
         String s;
-        StaticJsonBuffer<350> jsonBuffer; 
+        StaticJsonBuffer<400> jsonBuffer; 
         JsonObject& root = jsonBuffer.createObject();
         JsonObject& state = root.createNestedObject("state");
         JsonObject& state_reported = state.createNestedObject("reported");
         state_reported["sensor"] = AWS_thing_name;
         state_reported["topic"] = AWS_content_topic;
         state_reported["battery"] = ESP.getVcc();
+        state_reported["rxlev"] = WiFi.RSSI();
+        state_reported["AppName"] = APPNAME;
+        state_reported["Version"] = VERSION;
+        state_reported["CompileDate"] = COMPDATE;
         root.printTo(s);
         mqttConnectAndSend(AWS_shadow, s.c_str());
         rtcMemAWS.sleepCycles = AWS_SHADOW_UPDATE_INTERVALS-1;
@@ -353,8 +357,7 @@ void setup() {
     else
         rtcMemAWS.sleepCycles--;
 
-    // DBG_PRINTLN();    
-    // DBG_PRINTP("Updating AWS RTC Mem...");
+
     DBG_PRINTLN();
     writeRTCMemAWS();
     DBG_PRINTLN();    

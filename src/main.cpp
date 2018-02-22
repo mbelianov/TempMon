@@ -7,6 +7,7 @@
 #include <DallasTemperature.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
+#include <Ticker.h>
 
 extern "C" {
 #include <user_interface.h>
@@ -27,13 +28,21 @@ ADC_MODE(ADC_VCC);
 #endif
 
 #define APPNAME "TempMon"
-#define VERSION "1.1.0-RC1"
+//version 1.2.0:    LED will now blink when TempMon is in config mode
+//                  poor RSSI will be indicated with series of blinks at power up
+#define VERSION "1.2.0"
 #define COMPDATE __DATE__ __TIME__
 #define MODEBUTTON 0    //GPIO00 (nodeMCU: D3 (FLASH))
 
-#define LED_PIN 2      //GPIO02 (nodeMCU: D4)
+#define LED_PIN 2       //GPIO02 (nodeMCU: D4)
 
 #define REPORT_INTERVAL 60 //minutes
+
+//RSSI should be above this level for reliable operation
+#define RSSI_CRITICAL_LEVEL (-75)
+
+Ticker ticker;
+
 
 // Data wire is plugged into port 2 on the ESP8266
 // TODO: is this the best pin to use!!!
@@ -212,6 +221,14 @@ void setup() {
     IAS.addField(AWS_endpoint, "aws_endpoint", "AWS Endpoint", 96);
     IAS.addField(AWS_content_topic, "topic", "Topic", 96);
 
+
+    //set up LED blinker 
+    IAS.onConfigMode([](){
+        ticker.attach_ms(750,[](){
+            digitalWrite(LED_PIN, !digitalRead(LED_PIN));
+        });
+    });
+
     if (resetInfo->reason == REASON_DEEP_SLEEP_AWAKE){
         Serial.println(F("Woke up from deep sleep!"));
         IAS.processField();
@@ -230,8 +247,9 @@ void setup() {
         writeRTCMemAWS();
         DBG_PRINTP("AWS RTC Mem initialized!");
         DBG_PRINTLN();        
-        IAS.begin(true, 'L');
         pinMode(LED_PIN, OUTPUT);
+        digitalWrite(LED_PIN, HIGH);
+        IAS.begin(true, 'L');
         digitalWrite(LED_PIN, LOW);
         DBG_PRINTP("Waiting to enter in config mode");
         unsigned long t = millis();
@@ -249,6 +267,23 @@ void setup() {
         }
         DBG_PRINTLN();
         digitalWrite(LED_PIN, HIGH);
+        
+        DBG_PRINTP("RSSI: ");
+        DBG_PRINT(WiFi.RSSI());
+        DBG_PRINTP("dB, Critical level set at: ");
+        DBG_PRINT(RSSI_CRITICAL_LEVEL);
+        DBG_PRINTLN();
+
+        if (WiFi.RSSI() < RSSI_CRITICAL_LEVEL){
+            ticker.attach_ms(150,[](){
+                digitalWrite(LED_PIN, !digitalRead(LED_PIN));
+            });
+            t = millis();
+            while ((millis() - t) < 3000)
+                yield();
+            ticker.detach();
+            digitalWrite(LED_PIN, HIGH);
+        }
     }
     
     readRTCMemAWS();

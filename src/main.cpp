@@ -30,7 +30,9 @@ ADC_MODE(ADC_VCC);
 #define APPNAME "TempMon"
 //version 1.2.0:    LED will now blink when TempMon is in config mode
 //                  poor RSSI will be indicated with series of blinks at power up
-#define VERSION "1.2.0"
+//vesrion 1.3.0:    in case of failure to update shadow service, it will be attempted 
+//                  again on next report cycle
+#define VERSION "1.3.0"
 #define COMPDATE __DATE__ __TIME__
 #define MODEBUTTON 0    //GPIO00 (nodeMCU: D3 (FLASH))
 
@@ -113,7 +115,7 @@ void callback(char* topic, byte* payload, unsigned int length) {
 
 }
 
-void mqttConnectAndSend(const char * topic, const char * msg) {
+boolean mqttConnectAndSend(const char * topic, const char * msg) {
     
     int retries = MAX_MQTT_CONNECT_RETRIES;
 
@@ -141,7 +143,7 @@ void mqttConnectAndSend(const char * topic, const char * msg) {
                     mqtt.loop();         
                     yield();
                 }
-                break;
+                return true;
             }
             else{
                 DBG_PRINTP(" -> Fail. Is msg too long!");
@@ -154,6 +156,7 @@ void mqttConnectAndSend(const char * topic, const char * msg) {
             DBG_PRINTP("Will try again...");
         }
     }
+    return false;
 
 }
 
@@ -386,8 +389,9 @@ void setup() {
         state_reported["Version"] = VERSION;
         state_reported["CompileDate"] = COMPDATE;
         root.printTo(s);
-        mqttConnectAndSend(AWS_shadow, s.c_str());
-        rtcMemAWS.sleepCycles = AWS_SHADOW_UPDATE_INTERVALS-1;
+        if (mqttConnectAndSend(AWS_shadow, s.c_str()))
+            //restart shadow update cycle only if succesfully updated
+            rtcMemAWS.sleepCycles = AWS_SHADOW_UPDATE_INTERVALS-1;
     }
     else
         rtcMemAWS.sleepCycles--;

@@ -30,9 +30,11 @@ ADC_MODE(ADC_VCC);
 #define APPNAME "TempMon"
 //version 1.2.0:    LED will now blink when TempMon is in config mode
 //                  poor RSSI will be indicated with series of blinks at power up
-//vesrion 1.3.0:    in case of failure to update shadow service, it will be attempted 
+//vesrion 1.3.0:    In case of failure to update shadow service, it will be attempted 
 //                  again on next report cycle
-#define VERSION "1.3.0"
+//version 1.4.0:    Introduced short waiting period to establish WiFi connection before 
+//                  sending MQTT msg
+#define VERSION "1.4.0"
 #define COMPDATE __DATE__ __TIME__
 #define MODEBUTTON 0    //GPIO00 (nodeMCU: D3 (FLASH))
 
@@ -43,8 +45,10 @@ ADC_MODE(ADC_VCC);
 //RSSI should be above this level for reliable operation
 #define RSSI_CRITICAL_LEVEL (-75)
 
-Ticker ticker;
+//timeout for wifi reconnect after deep sleep
+#define WIFI_RECONNECT_TIMEOUT 500
 
+Ticker ticker;
 
 // Data wire is plugged into port 2 on the ESP8266
 // TODO: is this the best pin to use!!!
@@ -120,6 +124,11 @@ boolean mqttConnectAndSend(const char * topic, const char * msg) {
     int retries = MAX_MQTT_CONNECT_RETRIES;
 
     DBG_PRINTP("Attempting MQTT connection...");
+
+    unsigned long ts = millis();
+    while (!WiFi.isConnected() && millis() < ts + WIFI_RECONNECT_TIMEOUT)
+        yield();
+
     while (mqtt.connect(AWS_thing_name) || retries-- > 0){
         if (mqtt.connected()){
             DBG_PRINTP("connected!");

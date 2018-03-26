@@ -34,7 +34,8 @@ ADC_MODE(ADC_VCC);
 //                  again on next report cycle
 //version 1.4.0:    Introduced short waiting period to establish WiFi connection before 
 //                  sending MQTT msg
-#define VERSION "1.4.0"
+//version 1.4.1:    bug fixing and code optimization
+#define VERSION "1.4.1"
 #define COMPDATE __DATE__ __TIME__
 #define MODEBUTTON 0    //GPIO00 (nodeMCU: D3 (FLASH))
 
@@ -45,8 +46,8 @@ ADC_MODE(ADC_VCC);
 //RSSI should be above this level for reliable operation
 #define RSSI_CRITICAL_LEVEL (-75)
 
-//timeout for wifi reconnect after deep sleep
-#define WIFI_RECONNECT_TIMEOUT 500
+//timeout for wifi reconnect after deep sleep (in multiples pof 500 ms)
+#define WIFI_RECONNECT_TIMEOUT 2
 
 Ticker ticker;
 
@@ -121,16 +122,32 @@ void callback(char* topic, byte* payload, unsigned int length) {
 
 boolean mqttConnectAndSend(const char * topic, const char * msg) {
     
-    int retries = MAX_MQTT_CONNECT_RETRIES;
+    int retries = WIFI_RECONNECT_TIMEOUT;
 
-    DBG_PRINTP("Attempting MQTT connection...");
+    DBG_PRINTP("Trying to publish: [");
+    DBG_PRINT(topic);
+    DBG_PRINTP("] ");
+    DBG_PRINT(msg);
+    DBG_PRINTLN();
+    
+    retries = WIFI_RECONNECT_TIMEOUT;
+    DBG_PRINTP("Connecting to WiFi AP...");
+    while (!WiFi.isConnected() && retries-- > 0 ) {
+		delay(500);
+        DBG_PRINTP(".");
+	} 
+    DBG_PRINTLN();
+    if (!WiFi.isConnected()) {
+        DBG_PRINTLN("Unable to connect to WiFi AP!");
+        return false;
+    }
 
-    unsigned long ts = millis();
-    while (!WiFi.isConnected() && millis() < ts + WIFI_RECONNECT_TIMEOUT)
-        yield();
-
-    while (mqtt.connect(AWS_thing_name) || retries-- > 0){
-        if (mqtt.connected()){
+    retries = MAX_MQTT_CONNECT_RETRIES;
+    while ( retries-- > 0){
+        DBG_PRINTP("Attempting MQTT connection (");
+        DBG_PRINT(MQTT_SOCKET_TIMEOUT);
+        DBG_PRINTP(")...");
+        if (mqtt.connect(AWS_thing_name)){
             DBG_PRINTP("connected!");
             DBG_PRINTLN();
             DBG_PRINTP("Publishing: [");
@@ -162,7 +179,6 @@ boolean mqttConnectAndSend(const char * topic, const char * msg) {
         else{
             DBG_PRINTP("failed, rc=");
             DBG_PRINTLN(mqtt.state());
-            DBG_PRINTP("Will try again...");
         }
     }
     return false;
@@ -286,7 +302,7 @@ void setup() {
         DBG_PRINT(RSSI_CRITICAL_LEVEL);
         DBG_PRINTLN();
 
-        if (WiFi.RSSI() < RSSI_CRITICAL_LEVEL){
+        if (WiFi.RSSI() < RSSI_CRITICAL_LEVEL || WiFi.RSSI() == 31){
             ticker.attach_ms(150,[](){
                 digitalWrite(LED_PIN, !digitalRead(LED_PIN));
             });

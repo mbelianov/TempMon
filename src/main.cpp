@@ -1,3 +1,14 @@
+//#define DBG_PROG 
+
+#ifdef DBG_PROG
+#define PROGMEM_T __attribute__((section(".irom.text.template")))
+#define DEBUG_LOG_T(fmt, ...) \
+    { static const char pfmt[] PROGMEM_T = fmt; Serial.printf_P(pfmt, ## __VA_ARGS__); }
+#else
+    #define DEBUG_LOG_T(fmt, ...)
+#endif
+
+
 #include <Arduino.h>
 #include <pgmspace.h>
 #include <FS.h>
@@ -8,6 +19,8 @@
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include <Ticker.h>
+#include <cert.h>
+#include <private.h>
 
 extern "C" {
 #include <user_interface.h>
@@ -15,17 +28,7 @@ extern "C" {
 
 ADC_MODE(ADC_VCC);
 
-//#define DBG_PROG 
 
-#ifdef DBG_PROG
-  #define DBG_PRINTLN(x)                  {Serial.println(x); /*delay(100);*/}
-  #define DBG_PRINT(x)                    Serial.print(x)
-  #define DBG_PRINTP(x)                   Serial.print(F(x))
-#else
-  #define DBG_PRINTLN(x) 
-  #define DBG_PRINT(x)
-  #define DBG_PRINTP(x)
-#endif
 
 #define APPNAME "TempMon"
 //version 1.2.0:    LED will now blink when TempMon is in config mode
@@ -35,7 +38,8 @@ ADC_MODE(ADC_VCC);
 //version 1.4.0:    Introduced short waiting period to establish WiFi connection before 
 //                  sending MQTT msg
 //version 1.4.1:    bug fixing and code optimization
-#define VERSION "1.4.1"
+//version 1.5.0:    option to load cert and private key from flash memmory
+#define VERSION "1.5.0"
 #define COMPDATE __DATE__ __TIME__
 #define MODEBUTTON 0    //GPIO00 (nodeMCU: D3 (FLASH))
 
@@ -62,13 +66,13 @@ DeviceAddress DS18B20Address;
 const int _nrXF = 3;
 
 //MQTT broker address
-#define AWS_ENDPOINT "a1jkex5rueqh0y.iot.us-east-1.amazonaws.com"
+const char* PROGMEM AWS_ENDPOINT="a1jkex5rueqh0y.iot.us-east-1.amazonaws.com";
 char* AWS_endpoint;  
 
 //AWS device name and shadow MQTT topic
 //Used for MQTT client and to communicate wth AWS shadow service
-#define AWS_SHADOW "$aws/things/%s/shadow/update"
-#define AWS_DEFAULT_NAME "TempMon-%08X"
+const char* PROGMEM AWS_SHADOW="$aws/things/%s/shadow/update";
+const char* PROGMEM AWS_DEFAULT_NAME="TempMon-%08X";
 char* AWS_thing_name;
 char* AWS_shadow;
 
@@ -85,7 +89,7 @@ rtcMemAWSDef rtcMemAWS;
 
 
 //MQTT topic for the actual content
-#define AWS_CONTENT_TOPIC  "MyHouse/Room1/Temperature"                                       
+const char* PROGMEM AWS_CONTENT_TOPIC="MyHouse/Room1/Temperature";
 char* AWS_content_topic;
 
 //global IAS object
@@ -109,59 +113,32 @@ PubSubClient mqtt(espClient);
 
 
 
-void callback(char* topic, byte* payload, unsigned int length) {
-    DBG_PRINTP("Message [");
-    DBG_PRINT(topic);
-    DBG_PRINTP("] ");
-    for (int i = 0; i < length; i++) {
-        DBG_PRINT((char)payload[i]);
-    }
-    DBG_PRINTLN();
-
-}
-
 boolean mqttConnectAndSend(const char * topic, const char * msg) {
     
     int retries = WIFI_RECONNECT_TIMEOUT;
 
-    DBG_PRINTP("Trying to publish: [");
-    DBG_PRINT(topic);
-    DBG_PRINTP("] ");
-    DBG_PRINT(msg);
-    DBG_PRINTLN();
+    DEBUG_LOG_T("Trying to publish: [%s] %s\n\r", topic, msg);
     
     retries = WIFI_RECONNECT_TIMEOUT;
-    DBG_PRINTP("Connecting to WiFi AP...");
+    DEBUG_LOG_T("Connecting to WiFi AP...");
     while (!WiFi.isConnected() && retries-- > 0 ) {
 		delay(500);
-        DBG_PRINTP(".");
+        DEBUG_LOG_T(".");
 	} 
-    DBG_PRINTLN();
+    DEBUG_LOG_T("\n\r");
     if (!WiFi.isConnected()) {
-        DBG_PRINTLN("Unable to connect to WiFi AP!");
+        DEBUG_LOG_T("Unable to connect to WiFi AP!\n\r");
         return false;
     }
 
     retries = MAX_MQTT_CONNECT_RETRIES;
     while ( retries-- > 0){
-        DBG_PRINTP("Attempting MQTT connection (");
-        DBG_PRINT(MQTT_SOCKET_TIMEOUT);
-        DBG_PRINTP(")...");
+        DEBUG_LOG_T("Attempting MQTT connection (timeout: %d s)...", MQTT_SOCKET_TIMEOUT);
         if (mqtt.connect(AWS_thing_name)){
-            DBG_PRINTP("connected!");
-            DBG_PRINTLN();
-            DBG_PRINTP("Publishing: [");
-            DBG_PRINT(topic);
-            DBG_PRINTP("] ");
-            DBG_PRINT(msg);
-            DBG_PRINTP(" (");
-            DBG_PRINT(strlen(topic)+strlen(msg));
-            DBG_PRINTP("/");
-            DBG_PRINT(MQTT_MAX_PACKET_SIZE);
-            DBG_PRINTP(") ");           
+            DEBUG_LOG_T("connected!\n\r");
+            DEBUG_LOG_T("Publishing: [%s] %s (%d/%d)",topic, msg, strlen(topic)+strlen(msg), MQTT_MAX_PACKET_SIZE);         
             if (mqtt.publish(topic, msg)) {
-                DBG_PRINTP("-> Success.");
-                DBG_PRINTLN();
+                DEBUG_LOG_T(" -> Success.\n\r");
                 retries = 0;  
                 //we need some delay to allow ESP8266 to actually send the MQTT packet
                 unsigned long ts = millis();
@@ -172,13 +149,11 @@ boolean mqttConnectAndSend(const char * topic, const char * msg) {
                 return true;
             }
             else{
-                DBG_PRINTP(" -> Fail. Is msg too long!");
-                DBG_PRINTLN(MQTT_MAX_PACKET_SIZE);                
+                DEBUG_LOG_T(" -> Fail. Is msg too long?");          
             }
         }
         else{
-            DBG_PRINTP("failed, rc=");
-            DBG_PRINTLN(mqtt.state());
+            DEBUG_LOG_T("failed, rc=%d", mqtt.state());
         }
     }
     return false;
@@ -186,8 +161,8 @@ boolean mqttConnectAndSend(const char * topic, const char * msg) {
 }
 
 bool readRTCMemAWS() {
-    DBG_PRINTP("Reading AWS RTC Mem...");
-    DBG_PRINTLN();
+    DEBUG_LOG_T("Reading AWS RTC Mem...\n\r");
+
 	bool ret = true;
     
 	system_rtc_mem_read(AWS_RTCMEM_BEGIN, &rtcMemAWS, sizeof(rtcMemAWS));
@@ -201,20 +176,15 @@ bool readRTCMemAWS() {
 }
 
 void writeRTCMemAWS() {
-    DBG_PRINTP("Writing AWS RTC Mem...");
-    DBG_PRINTLN();
+    DEBUG_LOG_T("Writing AWS RTC Mem...\n\r");
+
 	rtcMemAWS.markerFlag = AWS_RTCMEM_MAGICBYTE;
 	system_rtc_mem_write(AWS_RTCMEM_BEGIN, &rtcMemAWS, sizeof(rtcMemAWS));
 }
 
 void printRTCMemAWS() {
-	DBG_PRINTP("AWS RTC Mem Status");
-    DBG_PRINTLN();
-    DBG_PRINTP("markerFlag: ");
-    DBG_PRINTLN(rtcMemAWS.markerFlag);
-	DBG_PRINTP("remaining sleep cycles: ");
-	DBG_PRINTLN(rtcMemAWS.sleepCycles);
-    DBG_PRINTLN();
+	DEBUG_LOG_T("AWS RTC Mem Status:\n\rmarkerFlag: %c\n\rremaining sleep cycles: %d\n\r", rtcMemAWS.markerFlag, rtcMemAWS.sleepCycles);
+
 }
 
 void fileDump(File* f){
@@ -224,25 +194,28 @@ void fileDump(File* f){
 }
 
 void setup() {
+    Serial.begin(115200);
 #ifdef DBG_PROG
+//    delay (10);
+    Serial.setDebugOutput(true);
     IAS.serialdebug(true,115200);      
 #endif
 
-    Serial.begin(115200);
+
 
     WiFi.begin();
 
     rst_info *resetInfo; 
     resetInfo = ESP.getResetInfoPtr();
 
-    AWS_endpoint = new char[strlen_P(PSTR(AWS_ENDPOINT)) + 1]; //+1 to accomodate for the termination char
-    strcpy_P(AWS_endpoint, PSTR(AWS_ENDPOINT));
+    AWS_endpoint = new char[strlen_P((AWS_ENDPOINT)) + 1]; //+1 to accomodate for the termination char
+    strcpy_P(AWS_endpoint, (AWS_ENDPOINT));
 
-    AWS_content_topic = new char[strlen_P(PSTR(AWS_CONTENT_TOPIC)) + 1];
-    strcpy_P(AWS_content_topic, PSTR(AWS_CONTENT_TOPIC));
+    AWS_content_topic = new char[strlen_P((AWS_CONTENT_TOPIC)) + 1];
+    strcpy_P(AWS_content_topic, (AWS_CONTENT_TOPIC));
 
-    AWS_thing_name = new char[strlen_P(PSTR(AWS_DEFAULT_NAME)) + 4 + 1]; 
-    sprintf_P(AWS_thing_name, PSTR(AWS_DEFAULT_NAME), ESP.getChipId());  
+    AWS_thing_name = new char[strlen_P((AWS_DEFAULT_NAME)) + 4 + 1]; 
+    sprintf_P(AWS_thing_name, (AWS_DEFAULT_NAME), ESP.getChipId());  
 
     IAS.preSetConfig(AWS_thing_name, false);
     IAS.addField(AWS_thing_name, "device_name", "Device Name", 25);
@@ -258,31 +231,29 @@ void setup() {
     });
 
     if (resetInfo->reason == REASON_DEEP_SLEEP_AWAKE){
-        Serial.println(F("Woke up from deep sleep!"));
+        Serial.println(("Woke up from deep sleep!"));
         IAS.processField();
 #ifdef DBG_PROG
         IAS.callHome();      
 #endif        
     }
     else {
-        DBG_PRINTP("Booting...!");
-        DBG_PRINTLN();
-        DBG_PRINTP("Flash real size: ");
-        DBG_PRINTLN(ESP.getFlashChipRealSize());  
-        DBG_PRINTP("Flash IDE size: ");
-        DBG_PRINTLN(ESP.getFlashChipSize());                  
+        DEBUG_LOG_T("Booting...!\n\r");
+        DEBUG_LOG_T("Flash real size: %u\n\r", ESP.getFlashChipRealSize());
+        DEBUG_LOG_T("Flash IDE size:  %u\n\r", ESP.getFlashChipSize());
+
         rtcMemAWS.sleepCycles = 0;
         writeRTCMemAWS();
-        DBG_PRINTP("AWS RTC Mem initialized!");
-        DBG_PRINTLN();        
+        DEBUG_LOG_T("AWS RTC Mem initialized!\n\r");
+      
         pinMode(LED_PIN, OUTPUT);
         digitalWrite(LED_PIN, HIGH);
         IAS.begin(true, 'L');
         digitalWrite(LED_PIN, LOW);
-        DBG_PRINTP("Waiting to enter in config mode");
+        DEBUG_LOG_T("Waiting to enter in config mode");
         unsigned long t = millis();
         while ((millis() - t) < 3000){ //allow user to ented config mode within 3 secs after power on
-            DBG_PRINT('.');
+            DEBUG_LOG_T(".");
             if (IAS.buttonLoop() != ModeButtonNoPress)
                 t = millis();
             delay(33);
@@ -293,14 +264,10 @@ void setup() {
                 digitalWrite(LED_PIN, LOW);                
             delay(33);
         }
-        DBG_PRINTLN();
+        DEBUG_LOG_T("\n\r");
         digitalWrite(LED_PIN, HIGH);
         
-        DBG_PRINTP("RSSI: ");
-        DBG_PRINT(WiFi.RSSI());
-        DBG_PRINTP("dB, Critical level set at: ");
-        DBG_PRINT(RSSI_CRITICAL_LEVEL);
-        DBG_PRINTLN();
+        DEBUG_LOG_T("RSSI: %ddB, Critical level set at: %d\n\r", WiFi.RSSI(), RSSI_CRITICAL_LEVEL);
 
         if (WiFi.RSSI() < RSSI_CRITICAL_LEVEL || WiFi.RSSI() == 31){
             ticker.attach_ms(150,[](){
@@ -316,68 +283,67 @@ void setup() {
     
     readRTCMemAWS();
 
-    AWS_shadow = new char[strlen_P(PSTR(AWS_SHADOW)) + strlen(AWS_thing_name) - 2 + 1];
-    sprintf_P(AWS_shadow, PSTR(AWS_SHADOW), AWS_thing_name);
+    AWS_shadow = new char[strlen_P((AWS_SHADOW)) + strlen(AWS_thing_name) - 2 + 1];
+    sprintf_P(AWS_shadow, (AWS_SHADOW), AWS_thing_name);
 
     // verify all parameters are ok
-    DBG_PRINTP("Parameters are:");
-    DBG_PRINTLN();
-    DBG_PRINTLN(AWS_thing_name);
-    DBG_PRINTLN(AWS_endpoint);
-    DBG_PRINTLN(AWS_shadow);
-    DBG_PRINTLN(AWS_content_topic);
-    DBG_PRINTLN();
+    DEBUG_LOG_T("Parameters are:\n\r%s\n\r%s\n\r%s\n\r%s\n\r", AWS_thing_name, AWS_endpoint, AWS_shadow, AWS_content_topic);
 
     mqtt.setServer(AWS_endpoint, 8883);
 
-    DBG_PRINTP("Loading credentials for AWS IoT core from SPIFFS...");
-    DBG_PRINTLN();
+    DEBUG_LOG_T("Loading credentials for AWS IoT core from SPIFFS...\n\r");
+
     if (!SPIFFS.begin()) {
-        DBG_PRINTP("Failed to mount file system");
-        DBG_PRINTLN();
+        DEBUG_LOG_T("Failed to mount file system!\n\r");
     }
     else {
-        DBG_PRINTP("SPIFFS content...");
-        DBG_PRINTLN();
+        DEBUG_LOG_T("SPIFFS content...\n\r");
         Dir dir = SPIFFS.openDir("");
         while (dir.next()) {
-            DBG_PRINTLN(dir.fileName());
+            DEBUG_LOG_T("%s %u\n\r", dir.fileName().c_str(), dir.fileSize());
         }        
-        DBG_PRINTP("Free heap: ");
-        DBG_PRINTLN(ESP.getFreeHeap());
+        DEBUG_LOG_T("Free heap: %u\n\r", ESP.getFreeHeap());
+
         // Load certificate file
         File cert = SPIFFS.open(CERTIFICATE_FILE, "r"); 
         if (!cert){ 
-            DBG_PRINTP("Failed to open cert file");
-            DBG_PRINTLN();
+            DEBUG_LOG_T("Failed to open cert file.\n\r");
+        }
+
+        if (cert && espClient.loadCertificate(cert)){ 
+            DEBUG_LOG_T("cert loaded!\n\r");
         }
         else{
-            DBG_PRINTP("Success to open cert file, ");
-            if (espClient.loadCertificate(cert))
-                DBG_PRINTP("cert loaded");
-            else
-                DBG_PRINTP("cert not loaded");
-            DBG_PRINTLN();
+            DEBUG_LOG_T("Failed to load cert from SPIFFS. Trying to load from flash...");
+            if (espClient.setCertificate_P(cert_der, cert_der_len)){
+                DEBUG_LOG_T("cert loaded\n\r");
+        }
+        else{
+                DEBUG_LOG_T("cert not loaded\n\r");
+            }
         }
 
         // Load private key file
         File private_key = SPIFFS.open(PRIVATE_KEY_FILE, "r"); 
         if (!private_key){ 
-            DBG_PRINTP("Failed to open private key file");
-            DBG_PRINTLN(); 
+            DEBUG_LOG_T("Failed to open private key file!\n\r");
+        }
+
+        if (private_key && espClient.loadPrivateKey(private_key)){
+            DEBUG_LOG_T("private key loaded!\n\r"); 
         }
         else{
-            DBG_PRINTP("Success to open private key file, "); 
-            if (espClient.loadPrivateKey(private_key))
-                DBG_PRINTP("private key loaded");
-            else
-                DBG_PRINTP("private key not loaded");    
-            DBG_PRINTLN();
+            DEBUG_LOG_T("Failed to load private key from SPIFFS. Trying to load from flash...");
+            if (espClient.setPrivateKey_P(private_der, private_der_len)){
+                DEBUG_LOG_T("private key loaded.\n\r");
+        }
+        else{
+                DEBUG_LOG_T("private key not loaded.\n\r");
+            }
         }           
 
         SPIFFS.end();
-        DBG_PRINTP("Free heap: ");
-        DBG_PRINTLN(ESP.getFreeHeap());
+        DEBUG_LOG_T("Free heap: %u\n\r", ESP.getFreeHeap());
     }
     
     float temp;
@@ -385,8 +351,7 @@ void setup() {
     DS18B20.setResolution(DS18B20Address,9);
     DS18B20.requestTemperatures(); 
     temp = DS18B20.getTempCByIndex(0); 
-    DBG_PRINTP("Temperature: ");
-    DBG_PRINTLN(temp);
+    DEBUG_LOG_T("Temperature: %f\n\r", temp);
     
     String s;
     StaticJsonBuffer<250> jsonBuffer; 
@@ -398,8 +363,7 @@ void setup() {
 
     // update AWS shadow service if needed
     if (rtcMemAWS.sleepCycles == 0){
-        DBG_PRINTP("Time to check for new FW and to update AWS shadow service.");
-        DBG_PRINTLN();
+        DEBUG_LOG_T("Time to check for new FW and to update AWS shadow service.\n\r");
         IAS.callHome();
         String s;
         StaticJsonBuffer<400> jsonBuffer; 
@@ -421,13 +385,10 @@ void setup() {
     else
         rtcMemAWS.sleepCycles--;
 
-
-    DBG_PRINTLN();
     writeRTCMemAWS();
-    DBG_PRINTLN();    
     printRTCMemAWS();
     
-    Serial.println(F("Going to deep sleep..."));
+    Serial.println(("Going to deep sleep..."));
 
     // Connect GPIO16 to RST to allow ESP to wake up from deepSleep
     ESP.deepSleep(1e6L * 60 * REPORT_INTERVAL); 

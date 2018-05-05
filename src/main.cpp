@@ -23,7 +23,7 @@
 #include <private.h>
 
 extern "C" {
-#include <user_interface.h>
+    #include <user_interface.h>
 }
 
 ADC_MODE(ADC_VCC);
@@ -51,7 +51,7 @@ ADC_MODE(ADC_VCC);
 #define RSSI_CRITICAL_LEVEL (-75)
 
 //timeout for wifi reconnect after deep sleep (in multiples pof 500 ms)
-#define WIFI_RECONNECT_TIMEOUT 2
+#define WIFI_RECONNECT_TIMEOUT 6
 
 Ticker ticker;
 
@@ -66,13 +66,13 @@ DeviceAddress DS18B20Address;
 const int _nrXF = 3;
 
 //MQTT broker address
-const char* PROGMEM AWS_ENDPOINT="a1jkex5rueqh0y.iot.us-east-1.amazonaws.com";
+const char* PROGMEM AWS_ENDPOINT = "a1jkex5rueqh0y.iot.us-east-1.amazonaws.com";
 char* AWS_endpoint;  
 
 //AWS device name and shadow MQTT topic
 //Used for MQTT client and to communicate wth AWS shadow service
-const char* PROGMEM AWS_SHADOW="$aws/things/%s/shadow/update";
-const char* PROGMEM AWS_DEFAULT_NAME="TempMon-%08X";
+const char* PROGMEM AWS_SHADOW = "$aws/things/%s/shadow/update";
+const char* PROGMEM AWS_DEFAULT_NAME = "TempMon-%08X";
 char* AWS_thing_name;
 char* AWS_shadow;
 
@@ -82,14 +82,14 @@ char* AWS_shadow;
 #define AWS_RTCMEM_BEGIN                (128-sizeof(rtcMemAWSDef)/4)           //at the end of rtc mem
 typedef struct {
     char markerFlag;            // magic byte
-    int sleepCycles;       // AWS shadow service update countdown
+    int sleepCycles;            // AWS shadow service update countdown
     //byte mode;  	            // spare
 } rtcMemAWSDef __attribute__ ((aligned(4)));
 rtcMemAWSDef rtcMemAWS;
 
 
 //MQTT topic for the actual content
-const char* PROGMEM AWS_CONTENT_TOPIC="MyHouse/Room1/Temperature";
+const char* PROGMEM AWS_CONTENT_TOPIC = "MyHouse/Room1/Temperature";
 char* AWS_content_topic;
 
 //global IAS object
@@ -232,10 +232,7 @@ void setup() {
 
     if (resetInfo->reason == REASON_DEEP_SLEEP_AWAKE){
         Serial.println(("Woke up from deep sleep!"));
-        IAS.processField();
-#ifdef DBG_PROG
-        IAS.callHome();      
-#endif        
+        IAS.processField();       
     }
     else {
         DEBUG_LOG_T("Booting...!\n\r");
@@ -317,8 +314,8 @@ void setup() {
             DEBUG_LOG_T("Failed to load cert from SPIFFS. Trying to load from flash...");
             if (espClient.setCertificate_P(cert_der, cert_der_len)){
                 DEBUG_LOG_T("cert loaded\n\r");
-        }
-        else{
+            }
+            else{
                 DEBUG_LOG_T("cert not loaded\n\r");
             }
         }
@@ -336,10 +333,10 @@ void setup() {
             DEBUG_LOG_T("Failed to load private key from SPIFFS. Trying to load from flash...");
             if (espClient.setPrivateKey_P(private_der, private_der_len)){
                 DEBUG_LOG_T("private key loaded.\n\r");
-        }
-        else{
-                DEBUG_LOG_T("private key not loaded.\n\r");
             }
+            else{
+                DEBUG_LOG_T("private key not loaded.\n\r");
+           }
         }           
 
         SPIFFS.end();

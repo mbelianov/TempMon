@@ -31,15 +31,26 @@ ADC_MODE(ADC_VCC);
 
 
 #define APPNAME "TempMon"
-//version 1.2.0:    LED will now blink when TempMon is in config mode
-//                  poor RSSI will be indicated with series of blinks at power up
-//vesrion 1.3.0:    In case of failure to update shadow service, it will be attempted 
-//                  again on next report cycle
-//version 1.4.0:    Introduced short waiting period to establish WiFi connection before 
-//                  sending MQTT msg
-//version 1.4.1:    bug fixing and code optimization
-//version 1.5.0:    option to load cert and private key from flash memmory
-#define VERSION "1.5.0"
+//  Important: pls set
+//  MQTT_MAX_PACKET_SIZE = 512
+//  MQTT_KEEPALIVE=30
+//  MQTT_SOCKET_TIMEOUT=30
+//
+//
+//  Version log:
+//
+//  version 1.2.0:      LED will now blink when TempMon is in config mode
+//                      poor RSSI will be indicated with series of blinks at power up
+//  vesrion 1.3.0:      In case of failure to update shadow service, it will be attempted 
+//                      again on next report cycle
+//  version 1.4.0:      Introduced short waiting period to establish WiFi connection before 
+//                      sending MQTT msg
+//  version 1.4.1:      bug fixing and code optimization
+//  version 1.5.0:      option to load cert and private key from flash memmory
+//  version 1.5.1:      Improved stability over various types of WiFi AP. 
+//                      MQTT_SOSCKET_TIMEOUT increased from 15 sec to 30 sec
+
+#define VERSION "1.5.1"
 #define COMPDATE __DATE__ __TIME__
 #define MODEBUTTON 0    //GPIO00 (nodeMCU: D3 (FLASH))
 
@@ -115,45 +126,49 @@ PubSubClient mqtt(espClient);
 
 boolean mqttConnectAndSend(const char * topic, const char * msg) {
     
-    int retries = WIFI_RECONNECT_TIMEOUT;
+    int retries;
 
     DEBUG_LOG_T("Trying to publish: [%s] %s\n\r", topic, msg);
     
     retries = WIFI_RECONNECT_TIMEOUT;
     DEBUG_LOG_T("Connecting to WiFi AP...");
+    long tStart = millis();
     while (!WiFi.isConnected() && retries-- > 0 ) {
 		delay(500);
         DEBUG_LOG_T(".");
 	} 
-    DEBUG_LOG_T("\n\r");
+
     if (!WiFi.isConnected()) {
         DEBUG_LOG_T("Unable to connect to WiFi AP!\n\r");
         return false;
     }
-
+    DEBUG_LOG_T("done! Time elapsed: %lu ms\n\r", millis()-tStart);
     retries = MAX_MQTT_CONNECT_RETRIES;
     while ( retries-- > 0){
         DEBUG_LOG_T("Attempting MQTT connection (timeout: %d s)...", MQTT_SOCKET_TIMEOUT);
+        tStart = millis();
         if (mqtt.connect(AWS_thing_name)){
-            DEBUG_LOG_T("connected!\n\r");
+            DEBUG_LOG_T("connected! Time elapsed: %lu ms\n\r", millis()-tStart);
             DEBUG_LOG_T("Publishing: [%s] %s (%d/%d)",topic, msg, strlen(topic)+strlen(msg), MQTT_MAX_PACKET_SIZE);         
+            tStart = millis();
             if (mqtt.publish(topic, msg)) {
-                DEBUG_LOG_T(" -> Success.\n\r");
+                DEBUG_LOG_T(" -> Success. Time elapsed: %lu ms\n\r", millis()-tStart);
                 retries = 0;  
-                //we need some delay to allow ESP8266 to actually send the MQTT packet
-                unsigned long ts = millis();
-                while(millis() < ts + 100){     
+                //loop untill data is sent
+                //unsigned long ts = millis();
+                //while(millis() < ts + 100){  
+                while (espClient.available()){
                     mqtt.loop();         
                     yield();
                 }
                 return true;
             }
             else{
-                DEBUG_LOG_T(" -> Fail. Is msg too long?");          
+                DEBUG_LOG_T(" -> Fail. Is msg too long? Time elapsed: %lu ms\n\r", millis()-tStart);         
             }
         }
         else{
-            DEBUG_LOG_T("failed, rc=%d", mqtt.state());
+            DEBUG_LOG_T("failed, rc=%d. Time elapsed: %lu ms\n\r", mqtt.state(), millis()-tStart);
         }
     }
     return false;
